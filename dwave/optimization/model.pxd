@@ -19,6 +19,7 @@ from libcpp cimport bool
 from libcpp.memory cimport shared_ptr
 from libcpp.vector cimport vector
 
+from dwave.optimization._graph cimport _Graph
 from dwave.optimization.libcpp.graph cimport ArrayNode as cppArrayNode, Node as cppNode
 from dwave.optimization.libcpp.graph cimport Graph as cppGraph
 from dwave.optimization.libcpp.state cimport State as cppState
@@ -26,7 +27,7 @@ from dwave.optimization.libcpp.state cimport State as cppState
 __all__ = ["Model"]
 
 
-cdef class Model:
+cdef class Model(_Graph):
     cpdef bool is_locked(self) noexcept
     cpdef Py_ssize_t num_decisions(self) noexcept
     cpdef Py_ssize_t num_nodes(self) noexcept

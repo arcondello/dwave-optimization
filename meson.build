@@ -65,6 +65,17 @@ else
 endif
 
 py.extension_module(
+    '_graph',
+    'dwave/optimization/_graph.pyx',
+    dependencies: libdwave_optimization,
+    gnu_symbol_visibility: 'default',
+    install: true,
+    install_rpath: '$ORIGIN',
+    override_options : ['cython_language=cpp'],
+    subdir: 'dwave/optimization/',
+)
+
+py.extension_module(
     'model',
     'dwave/optimization/model.pyx',
     dependencies: libdwave_optimization,

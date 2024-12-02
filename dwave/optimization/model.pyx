@@ -62,7 +62,7 @@ def locked(model):
         model.unlock()
 
 
-cdef class Model:
+cdef class Model(_Graph):
     """Nonlinear model.
 
     The nonlinear model represents a general optimization problem with an

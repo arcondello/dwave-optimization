@@ -62,7 +62,7 @@ def locked(model):
         model.unlock()
 
 
-cdef class Model(_Graph):
+cdef class _Model(_Graph):
     """Nonlinear model.
 
     The nonlinear model represents a general optimization problem with an
@@ -315,7 +315,7 @@ cdef class Model(_Graph):
             header_len = struct.unpack('<I', file.read(4))[0]
             header_data = json.loads(file.read(header_len).decode('ascii'))
 
-        cdef Model model = cls()
+        cdef _Model model = cls()
 
         with zipfile.ZipFile(file, mode="r") as zf:
             model_info = json.loads(zf.read("info.json"))
@@ -1036,6 +1036,10 @@ cdef class Model(_Graph):
                 states._states[i].resize(self.num_decisions())
 
 
+class Model(_Model):
+    pass
+
+
 cdef class Symbol:
     """Base class for symbols.
 
@@ -1056,7 +1060,7 @@ cdef class Symbol:
         cls = type(self)
         return f"<{cls.__module__}.{cls.__qualname__} at {self.id():#x}>"
 
-    cdef void initialize_node(self, Model model, cppNode* node_ptr) noexcept:
+    cdef void initialize_node(self, _Model model, cppNode* node_ptr) noexcept:
         self.model = model
 
         self.node_ptr = node_ptr
@@ -1087,7 +1091,7 @@ cdef class Symbol:
         return deref(self.expired_ptr)
 
     @staticmethod
-    cdef Symbol from_ptr(Model model, cppNode* ptr):
+    cdef Symbol from_ptr(_Model model, cppNode* ptr):
         """Construct a Symbol from a C++ Node pointer.
 
         There are times when a Node* needs to be passed through the Python layer
@@ -1108,7 +1112,7 @@ cdef class Symbol:
         raise ValueError("Symbols cannot be constructed directly")
 
     @classmethod
-    def _from_zipfile(cls, zf, directory, Model model, predecessors):
+    def _from_zipfile(cls, zf, directory, _Model model, predecessors):
         """Construct a symbol from a compressed file.
 
         Args:
@@ -1492,7 +1496,7 @@ cdef class ArraySymbol(Symbol):
         # via their subclasses.
         raise ValueError("ArraySymbols cannot be constructed directly")
 
-    cdef void initialize_arraynode(self, Model model, cppArrayNode* array_ptr) noexcept:
+    cdef void initialize_arraynode(self, _Model model, cppArrayNode* array_ptr) noexcept:
         self.array_ptr = array_ptr
         self.initialize_node(model, array_ptr)
 

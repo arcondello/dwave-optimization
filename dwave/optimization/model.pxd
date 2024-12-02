@@ -24,10 +24,10 @@ from dwave.optimization.libcpp.graph cimport ArrayNode as cppArrayNode, Node as 
 from dwave.optimization.libcpp.graph cimport Graph as cppGraph
 from dwave.optimization.libcpp.state cimport State as cppState
 
-__all__ = ["Model"]
+__all__ = ["_Model"]
 
 
-cdef class Model(_Graph):
+cdef class _Model(_Graph):
     cpdef bool is_locked(self) noexcept
     cpdef Py_ssize_t num_decisions(self) noexcept
     cpdef Py_ssize_t num_nodes(self) noexcept
@@ -86,7 +86,7 @@ cdef class Model(_Graph):
 
 cdef class Symbol:
     # Inheriting nodes must call this method from their __init__()
-    cdef void initialize_node(self, Model model, cppNode* node_ptr) noexcept
+    cdef void initialize_node(self, _Model model, cppNode* node_ptr) noexcept
 
     cpdef uintptr_t id(self) noexcept
 
@@ -94,12 +94,12 @@ cdef class Symbol:
     cpdef bool expired(self) noexcept
 
     @staticmethod
-    cdef Symbol from_ptr(Model model, cppNode* ptr)
+    cdef Symbol from_ptr(_Model model, cppNode* ptr)
 
     # Hold on to a reference to the Model, both for access but also, importantly,
     # to ensure that the model doesn't get garbage collected unless all of
     # the observers have also been garbage collected.
-    cdef readonly Model model
+    cdef readonly _Model model
 
     # Hold Node* pointer. This is redundant as most observers will also hold
     # a pointer to their observed node with the correct type. But the cost
@@ -117,7 +117,7 @@ cdef class Symbol:
 # also Symbols (probably a fair assumption)
 cdef class ArraySymbol(Symbol):
     # Inheriting symbols must call this method from their __init__()
-    cdef void initialize_arraynode(self, Model model, cppArrayNode* array_ptr) noexcept
+    cdef void initialize_arraynode(self, _Model model, cppArrayNode* array_ptr) noexcept
 
     # Hold ArrayNode* pointer. Again this is redundant, because we're also holding
     # a pointer to Node* and we can theoretically dynamic cast each time.

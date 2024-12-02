@@ -95,7 +95,7 @@ from dwave.optimization.libcpp.nodes cimport (
     WhereNode as cppWhereNode,
     XorNode as cppXorNode,
     )
-from dwave.optimization.model cimport ArraySymbol, Model, Symbol
+from dwave.optimization.model cimport ArraySymbol, _Model as Model, Symbol
 from dwave.optimization.states cimport States
 
 __all__ = [

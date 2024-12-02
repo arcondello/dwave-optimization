@@ -16,7 +16,7 @@
 
 from libcpp.typeinfo cimport type_info
 
-from dwave.optimization.model cimport Model
+from dwave.optimization.model cimport _Model as Model
 from dwave.optimization.libcpp.graph cimport Array as cppArray
 from dwave.optimization.libcpp.graph cimport Node as cppNode
 

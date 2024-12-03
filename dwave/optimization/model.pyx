@@ -671,23 +671,6 @@ cdef class _Model(_Graph):
         """
         return sum(sym.state_size() for sym in self.iter_symbols())
 
-    def unlock(self):
-        """Release a lock, decrementing the lock count.
-
-        Symbols can be added to unlocked models only.
-
-        See also:
-            :meth:`.is_locked`, :meth:`.lock`
-        """
-        if not self.is_locked():
-            # already unlocked, nothing to do
-            return
-
-        super().unlock()
-
-        if not self.is_locked():
-            self.states._reset_intermediate_states()
-
 class Model(_Model):
     def lock(self):
         """Lock the model.
@@ -931,6 +914,23 @@ class Model(_Model):
             G.add_edge(repr(symbol), "constraint(s)")
 
         return G
+
+    def unlock(self):
+        """Release a lock, decrementing the lock count.
+
+        Symbols can be added to unlocked models only.
+
+        See also:
+            :meth:`.is_locked`, :meth:`.lock`
+        """
+        if not self.is_locked():
+            # already unlocked, nothing to do
+            return
+
+        super().unlock()
+
+        if not self.is_locked():
+            self.states._reset_intermediate_states()
 
 
 cdef class Symbol:

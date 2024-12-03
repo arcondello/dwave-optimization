@@ -220,6 +220,13 @@ cdef class States:
             raise ReferenceError("accessing the states of a garbage collected model")
         return m
 
+    def _reset_intermediate_states(self):
+        """Reset the state of an non-decisions."""
+        self.resolve()
+        cdef Py_ssize_t num_decisions = self._model().num_decisions()
+        for i in range(self._states.size()):
+            self._states[i].resize(num_decisions)
+
     def resize(self, Py_ssize_t n):
         """Resize the number of states.
 

@@ -28,18 +28,17 @@ __all__ = ["_Model"]
 
 
 cdef class _Model(_Graph):
-    cpdef bool is_locked(self) noexcept
-    cpdef Py_ssize_t num_decisions(self) noexcept
-    cpdef Py_ssize_t num_nodes(self) noexcept
-    cpdef Py_ssize_t num_constraints(self) noexcept
+    # cpdef bool is_locked(self) noexcept
+    # cpdef Py_ssize_t num_decisions(self) noexcept
+    # cpdef Py_ssize_t num_nodes(self) noexcept
+    # cpdef Py_ssize_t num_constraints(self) noexcept
     
-    # Allow dynamic attributes on the Model class
-    cdef dict __dict__
+    # # Allow dynamic attributes on the Model class
+    # cdef dict __dict__
 
-    # Make the Model class weak referenceable
-    cdef object __weakref__
 
-    cdef cppGraph _graph
+
+    # cdef cppGraph _graph
 
     cdef readonly object objective  # todo: cdef ArraySymbol?
     """Objective to be minimized.
@@ -75,8 +74,8 @@ cdef class _Model(_Graph):
         :meth:`~dwave.optimization.model.States.resize`.
     """
 
-    # The number of times "lock()" has been called.
-    cdef readonly Py_ssize_t _lock_count
+    # # The number of times "lock()" has been called.
+    # cdef readonly Py_ssize_t _lock_count
 
     # Used to keep NumPy arrays that own data alive etc etc
     # We could pair each of these with an expired_ptr for the node holding

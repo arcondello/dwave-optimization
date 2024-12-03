@@ -12,6 +12,22 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
+from libcpp cimport bool
+
+from dwave.optimization.libcpp.graph cimport Graph as cppGraph
+
 
 cdef class _Graph:
-    pass
+    cpdef bool is_locked(self) noexcept
+    cpdef Py_ssize_t num_constraints(self) noexcept
+    cpdef Py_ssize_t num_edges(self) noexcept
+    cpdef Py_ssize_t num_decisions(self) noexcept
+    cpdef Py_ssize_t num_nodes(self) noexcept
+
+    # Make the _Graph class weak-referenceable. This is used by States
+    cdef object __weakref__
+
+    cdef cppGraph _graph
+
+    # The number of times "lock()" has been called.
+    cdef readonly Py_ssize_t _lock_count

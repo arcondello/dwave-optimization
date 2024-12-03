@@ -551,16 +551,6 @@ cdef class _Model(_Graph):
                         directory = f"nodes/{node.topological_index()}/states/{i}/"
                         node._state_into_zipfile(zf, directory, i)
 
-    cpdef bool is_locked(self) noexcept:
-        """Lock status of the model.
-
-        No new symbols can be added to a locked model.
-
-        See also:
-            :meth:`.lock`, :meth:`.unlock`
-        """
-        return self._lock_count > 0
-
     def iter_constraints(self):
         """Iterate over all constraints in the model.
 
@@ -632,6 +622,73 @@ cdef class _Model(_Graph):
         from dwave.optimization.symbols import ListVariable  # avoid circular import
         return ListVariable(self, n)
 
+    def minimize(self, ArraySymbol value):
+        """Set the objective value to minimize.
+
+        Optimization problems have an objective and/or constraints. The objective
+        expresses one or more aspects of the problem that should be minimized
+        (equivalent to maximization when multiplied by a minus sign). For example,
+        an optimized itinerary might minimize the value of distance traveled or
+        cost of transportation or travel time.
+
+        Args:
+            value: Value for which to minimize the cost function.
+
+        Examples:
+            This example minimizes a simple polynomial, :math:`y = i^2 - 4i`,
+            within bounds.
+
+            >>> from dwave.optimization import Model
+            >>> model = Model()
+            >>> i = model.integer(lower_bound=-5, upper_bound=5)
+            >>> c = model.constant(4)
+            >>> y = i*i - c*i
+            >>> model.minimize(y)
+        """
+        if value is None:
+            raise ValueError("value cannot be None")
+        if value.size() < 1:
+            raise ValueError("the value of an empty array is ambiguous")
+        if value.size() > 1:
+            raise ValueError("the value of an array with more than one element is ambiguous")
+        self._graph.set_objective(value.array_ptr)
+        self.objective = value
+
+    def state_size(self):
+        """An estimate of the size, in bytes, of all states in the model.
+
+        Iterates over the model's states and totals the sizes of all.
+
+        Examples:
+            This example estimates the size of a model's states.
+
+            >>> from dwave.optimization.model import Model
+            >>> model = Model()
+            >>> c = model.constant([1, 5, 8.4])
+            >>> i = model.integer(20, upper_bound=100)
+            >>> model.state_size()
+            184
+        """
+        return sum(sym.state_size() for sym in self.iter_symbols())
+
+    def unlock(self):
+        """Release a lock, decrementing the lock count.
+
+        Symbols can be added to unlocked models only.
+
+        See also:
+            :meth:`.is_locked`, :meth:`.lock`
+        """
+        if not self.is_locked():
+            # already unlocked, nothing to do
+            return
+
+        super().unlock()
+
+        if not self.is_locked():
+            self.states._reset_intermediate_states()
+
+class Model(_Model):
     def lock(self):
         """Lock the model.
 
@@ -668,125 +725,8 @@ cdef class _Model(_Graph):
             >>> model.is_locked()
             False
         """
-        self._graph.topological_sort()  # does nothing if already sorted, so safe to call always
-        self._lock_count += 1
-
-        # note that we do not initialize the nodes or resize the states!
-        # We do it lazily for performance
-
+        super().lock()
         return locked(self)
-
-    def minimize(self, ArraySymbol value):
-        """Set the objective value to minimize.
-
-        Optimization problems have an objective and/or constraints. The objective
-        expresses one or more aspects of the problem that should be minimized
-        (equivalent to maximization when multiplied by a minus sign). For example,
-        an optimized itinerary might minimize the value of distance traveled or
-        cost of transportation or travel time.
-
-        Args:
-            value: Value for which to minimize the cost function.
-
-        Examples:
-            This example minimizes a simple polynomial, :math:`y = i^2 - 4i`,
-            within bounds.
-
-            >>> from dwave.optimization import Model
-            >>> model = Model()
-            >>> i = model.integer(lower_bound=-5, upper_bound=5)
-            >>> c = model.constant(4)
-            >>> y = i*i - c*i
-            >>> model.minimize(y)
-        """
-        if value is None:
-            raise ValueError("value cannot be None")
-        if value.size() < 1:
-            raise ValueError("the value of an empty array is ambiguous")
-        if value.size() > 1:
-            raise ValueError("the value of an array with more than one element is ambiguous")
-        self._graph.set_objective(value.array_ptr)
-        self.objective = value
-
-    cpdef Py_ssize_t num_constraints(self) noexcept:
-        """Number of constraints in the model.
-
-        Examples:
-            This example checks the number of constraints in the model after
-            adding a couple of constraints.
-
-            >>> from dwave.optimization.model import Model
-            >>> model = Model()
-            >>> i = model.integer()
-            >>> c = model.constant([5, -14])
-            >>> model.add_constraint(i <= c[0]) # doctest: +ELLIPSIS
-            <dwave.optimization.symbols.LessEqual at ...>
-            >>> model.add_constraint(c[1] <= i) # doctest: +ELLIPSIS
-            <dwave.optimization.symbols.LessEqual at ...>
-            >>> model.num_constraints()
-            2
-        """
-        return self._graph.num_constraints()
-
-    cpdef Py_ssize_t num_decisions(self) noexcept:
-        """Number of independent decision nodes in the model.
-
-        An array-of-integers symbol, for example, counts as a single
-        decision node.
-
-        Examples:
-            This example checks the number of decisions in a model after
-            adding a single (size 20) decision symbol.
-
-            >>> from dwave.optimization.model import Model
-            >>> model = Model()
-            >>> c = model.constant([1, 5, 8.4])
-            >>> i = model.integer(20, upper_bound=100)
-            >>> model.num_decisions()
-            1
-        """
-        return self._graph.num_decisions()
-
-    def num_edges(self):
-        """Number of edges in the directed acyclic graph for the model.
-
-        Examples:
-            This example minimizes the sum of a single constant symbol and
-            a single decision symbol, then checks the number of edges in
-            the model.
-
-            >>> from dwave.optimization.model import Model
-            >>> model = Model()
-            >>> c = model.constant(5)
-            >>> i = model.integer()
-            >>> model.minimize(c + i)
-            >>> model.num_edges()
-            2
-        """
-        cdef Py_ssize_t num_edges = 0
-        for i in range(self._graph.num_nodes()):
-            num_edges += self._graph.nodes()[i].get().successors().size()
-        return num_edges
-
-    cpdef Py_ssize_t num_nodes(self) noexcept:
-        """Number of nodes in the directed acyclic graph for the model.
-
-        See also:
-            :meth:`.num_symbols`
-
-        Examples:
-            This example add a single (size 20) decision symbol and
-            a single (size 3) constant symbol checks the number of
-            nodes in the model.
-
-            >>> from dwave.optimization.model import Model
-            >>> model = Model()
-            >>> c = model.constant([1, 5, 8.4])
-            >>> i = model.integer(20, upper_bound=100)
-            >>> model.num_nodes()
-            2
-        """
-        return self._graph.num_nodes()
 
     def num_symbols(self):
         """Number of symbols tracked by the model.
@@ -886,9 +826,7 @@ cdef class _Model(_Graph):
             3
 
         """
-        if self.is_locked():
-            raise ValueError("cannot remove symbols from a locked model")
-        return self._graph.remove_unused_nodes()
+        return self._remove_unused_nodes()
 
     def set(self, Py_ssize_t n, Py_ssize_t min_size = 0, max_size = None):
         """Create a set symbol as a decision variable.
@@ -911,23 +849,6 @@ cdef class _Model(_Graph):
         """
         from dwave.optimization.symbols import SetVariable  # avoid circular import
         return SetVariable(self, n, min_size, n if max_size is None else max_size)
-
-    def state_size(self):
-        """An estimate of the size, in bytes, of all states in the model.
-
-        Iterates over the model's states and totals the sizes of all.
-
-        Examples:
-            This example estimates the size of a model's states.
-
-            >>> from dwave.optimization.model import Model
-            >>> model = Model()
-            >>> c = model.constant([1, 5, 8.4])
-            >>> i = model.integer(20, upper_bound=100)
-            >>> model.state_size()
-            184
-        """
-        return sum(sym.state_size() for sym in self.iter_symbols())
 
     def to_file(self, **kwargs):
         """Serialize the model to a new file-like object.
@@ -1010,34 +931,6 @@ cdef class _Model(_Graph):
             G.add_edge(repr(symbol), "constraint(s)")
 
         return G
-
-    def unlock(self):
-        """Release a lock, decrementing the lock count.
-
-        Symbols can be added to unlocked models only.
-
-        See also:
-            :meth:`.is_locked`, :meth:`.lock`
-        """
-        if self._lock_count < 1:
-            return  # already unlocked, nothing to do
-
-        self._lock_count -= 1
-
-        cdef States states = self.states  # for Cython access
-
-        # if we're now unlocked, then reset the topological sort and the
-        # non-decision states
-        if self._lock_count < 1:
-            self._graph.reset_topological_sort()
-            for i in range(states.size()):
-                # this might actually increase the size of the states in some
-                # cases, but that's fine
-                states._states[i].resize(self.num_decisions())
-
-
-class Model(_Model):
-    pass
 
 
 cdef class Symbol:

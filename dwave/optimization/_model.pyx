@@ -354,9 +354,11 @@ cdef class _Graph:
             if num_states > 0:  # redundant, but good short circuit
                 for node in itertools.islice(self.iter_symbols(), self.num_decisions()):
                     # only save states that have been initialized
-                    for i in filter(node.has_state, range(num_states)):
-                        directory = f"nodes/{node.topological_index()}/states/{i}/"
-                        node._state_into_zipfile(zf, directory, i)
+                    node._states_into_zipfile(zf, f"nodes/{node.topological_index()}/", num_states)
+
+                    # for i in filter(node.has_state, range(num_states)):
+                    #     directory = f"nodes/{node.topological_index()}/states/{i}/"
+                    #     node._state_into_zipfile(zf, directory, i)
 
     cpdef bool is_locked(self) noexcept:
         """Lock status of the model.
@@ -1502,6 +1504,24 @@ cdef class ArraySymbol(Symbol):
         # then save into the state directory
         with zf.open(directory + "array.npy", mode="w", force_zip64=True) as f:
             np.save(f, array, allow_pickle=False)
+
+    def _states_into_zipfile(self, zf, directory, Py_ssize_t num_states):
+        if self.array_ptr.dynamic():
+            # todo: either save a ragged array, or in separate directories similar
+            # to v1 (maybe even calling v1's implementation?)
+            raise NotImplementedError
+
+        # make a single (num_states, *shape()) numpy array
+        states = np.empty(shape=(num_states, *self.shape()), dtype=float)  # todo: self.dtype?
+        for i in range(num_states):
+            states[i] = self.state(i)
+
+        # print(states)
+
+        with zf.open(directory + "states.npy", mode="w", force_zip64=True) as f:
+            np.save(f, states, allow_pickle=False)
+
+        # raise NotImplementedError
 
     def state_size(self):
         """Return an estimated byte-size of the state.

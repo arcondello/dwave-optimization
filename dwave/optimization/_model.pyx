@@ -147,7 +147,7 @@ cdef class _Graph:
 
         cdef _Graph model = cls()
 
-        with zipfile.ZipFile(file, mode="r") as zf:
+        with zipfile.ZipFile(file, mode="r", compression=zipfile.ZIP_DEFLATED) as zf:
             model_info = json.loads(zf.read("info.json"))
 
             num_nodes = model_info.get("num_nodes")
@@ -303,7 +303,7 @@ cdef class _Graph:
         file.write(padding)
 
         # The rest of it is a zipfile
-        with zipfile.ZipFile(file, mode="w") as zf:
+        with zipfile.ZipFile(file, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("info.json", encoder.encode(model_info))
             zf.writestr("version.txt", ".".join(map(str, version)))
 

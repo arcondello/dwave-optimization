@@ -14,8 +14,9 @@
 
 #pragma once
 
-#include <iostream>
+#include <iosfwd>
 #include <numeric>
+#include <stdexcept>
 #include <vector>
 
 namespace dwave::optimization {
@@ -144,13 +145,7 @@ class fraction {
     }
 
     /// Fractions can be printed
-    friend std::ostream& operator<<(std::ostream& os, const fraction& rhs) {
-        os << "fraction(" << rhs.numerator();
-        if (rhs.denominator() != 1) {
-            os << ", " << rhs.denominator();
-        }
-        return os << ")";
-    }
+    friend std::ostream& operator<<(std::ostream& os, const fraction& rhs);
 
     // dev note: obviously there are many more operators that we could add,
     // but they should be added as needed rather than eagerly.

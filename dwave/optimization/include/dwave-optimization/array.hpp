@@ -19,7 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
-#include <iostream>
+#include <iosfwd>
 #include <limits>
 #include <memory>
 #include <numeric>

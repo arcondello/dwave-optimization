@@ -15,10 +15,19 @@
 #include "dwave-optimization/utils.hpp"
 
 #include <cmath>
+#include <iostream>
 
 #include "dwave-optimization/array.hpp"
 
 namespace dwave::optimization {
+
+std::ostream& operator<<(std::ostream& os, const fraction& rhs) {
+    os << "fraction(" << rhs.numerator();
+    if (rhs.denominator() != 1) {
+        os << ", " << rhs.denominator();
+    }
+    return os << ")";
+}
 
 bool is_integer(const double& value) {
     static double dummy = 0;

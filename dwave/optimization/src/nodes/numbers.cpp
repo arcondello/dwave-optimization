@@ -118,7 +118,11 @@ struct NumberNodeStateData : public ArrayNodeStateData {
     }
 
     /// Revert the state dependent data of NumberNode.
-    void revert();
+    ///
+    /// Virtual so that subclasses maintaining extra caches (e.g. BinaryNode's
+    /// `slice_indices`) can restore them without a per-update virtual call in
+    /// this (hot) loop.
+    virtual void revert();
 
     /// For each sum constraint, track the sum of the values within each slice.
     /// `sum_constraints_lhs[i][j]` is the sum of the values within the `j`th slice
@@ -133,33 +137,27 @@ struct NumberNodeStateData : public ArrayNodeStateData {
     /// value stored at `index` is changed by `difference`. If `slices` is given,
     /// it holds the slice (per sum constraint) that `index` lies on; otherwise
     /// the slices are computed from `index`.
-    void update_(
+    ///
+    /// Virtual so that subclasses maintaining extra caches (e.g. BinaryNode's
+    /// `slice_indices`) can fold that work into the same loop, rather than
+    /// paying a per-constraint virtual call. Called once per changed value.
+    virtual void update_(
         const ssize_t index,
         const double difference,
         std::optional<std::vector<ssize_t>> slices
     );
 
+    /// Resolve the slice (per sum constraint) that `index` lies on. If `slices`
+    /// is given it is returned as-is (checked in debug); otherwise the slices
+    /// are computed from `index`. Shared by every `update_()` implementation.
+    std::vector<ssize_t> resolve_slices_(
+        const ssize_t index,
+        std::optional<std::vector<ssize_t>> slices
+    ) const;
+
     /// The node this state data belongs to. Used to read the (stateless) sum
     /// constraints, shape, and strides. The node outlives the state.
     const NumberNode& node_;
-
-    /// Hook called for each sum constraint when the value at `index` changes by
-    /// `difference` (landing on `slice`). Base does nothing; subclasses with
-    /// extra per-slice bookkeeping (e.g. BinaryNode) override it.
-    virtual void track_index_(
-        const ssize_t constraint,
-        const ssize_t index,
-        const ssize_t slice,
-        const double difference
-    ) {}
-
-    /// Inverse of `track_index_`, called from `revert()` for each cached update.
-    /// `update` is the buffer update being undone. Base does nothing.
-    virtual void untrack_index_(
-        const ssize_t constraint,
-        const Update& update,
-        const ssize_t slice
-    ) {}
 
     /// When updating the buffer, we cache the slice per sum constraint that
     /// a given index lies on for efficient reverts().
@@ -214,15 +212,12 @@ void NumberNodeStateData::revert() {
         // Iterate over the updates in reverse order. This is important
         // since a single index may have been updated multiple times.
         for (ssize_t i = static_cast<ssize_t>(updates.size()) - 1; i >= 0; --i) {
-            const Update& update = updates[i];
-            const double difference = update.value - update.old;
+            const double difference = updates[i].value - updates[i].old;
             const std::vector<ssize_t>& slices = slice_cache_[i];
 
-            // Reverse the change applied to each running sum (and any subclass
-            // per-slice bookkeeping via untrack_index_()).
+            // Reverse the change applied to each running sum.
             for (ssize_t j = static_cast<ssize_t>(slices.size()) - 1; j >= 0; --j) {
                 sum_constraints_lhs[j][slices[j]] -= difference;
-                untrack_index_(j, update, slices[j]);
             }
         }
         slice_cache_.clear();  // Empty the slice cache.
@@ -231,48 +226,61 @@ void NumberNodeStateData::revert() {
     ArrayNodeStateData::revert();  // Revert changes to the buffer.
 }
 
+std::vector<ssize_t> NumberNodeStateData::resolve_slices_(
+    const ssize_t index,
+    std::optional<std::vector<ssize_t>> slices
+) const {
+    const auto& sum_constraints = node_.sum_constraints();
+
+    // Callers may provide the slices; sanity check them (in debug) and return.
+    if (slices.has_value()) {
+        assert(sum_constraints.size() == slices->size());
+        assert(([&]() {
+            for (ssize_t i = 0, stop = static_cast<ssize_t>(sum_constraints.size()); i < stop; ++i) {
+                const std::optional<const ssize_t> axis = sum_constraints[i].axis();
+                if (!axis.has_value()) {
+                    if ((*slices)[i] != 0) return false;
+                } else if ((*slices)[i] != unravel_index(index, node_.shape())[*axis]) {
+                    return false;
+                }
+            }
+            return true;
+        })());
+        return std::move(*slices);
+    }
+
+    // Otherwise compute them from the multidimensional index.
+    std::vector<ssize_t> resolved;
+    resolved.reserve(sum_constraints.size());
+    const std::vector<ssize_t> multi_index = unravel_index(index, node_.shape());
+    assert(sum_constraints.size() <= multi_index.size());
+    for (ssize_t i = 0, stop = static_cast<ssize_t>(sum_constraints.size()); i < stop; ++i) {
+        const std::optional<const ssize_t> axis = sum_constraints[i].axis();
+        /// Determine the "slice" that index lies on given the sum constraint.
+        /// If `axis == std::nullopt`, the array is treated as a flat array with
+        /// a single slice. Otherwise, the slice is defined by multi_index.
+        assert(!axis.has_value() || *axis < static_cast<ssize_t>(multi_index.size()));
+        resolved.push_back(axis.has_value() ? multi_index[*axis] : 0);
+    }
+    return resolved;
+}
+
 void NumberNodeStateData::update_(
     const ssize_t index,
     const double difference,
     std::optional<std::vector<ssize_t>> slices
 ) {
-    const auto& sum_constraints = node_.sum_constraints();
-    assert(sum_constraints.size() != 0);  // Should only call where applicable.
-    assert(difference != 0);              // Should not call when no change occurs.
-    assert(sum_constraints.size() == sum_constraints_lhs.size());
+    assert(node_.sum_constraints().size() != 0);  // Should only call where applicable.
+    assert(difference != 0);                       // Should not call when no change occurs.
+    assert(node_.sum_constraints().size() == sum_constraints_lhs.size());
 
-    // Resolve the slice (per sum constraint) that `index` lies on. Callers may
-    // provide these; otherwise compute them from the multidimensional index.
-    std::vector<ssize_t> resolved;
-    if (slices.has_value()) {
-        resolved = std::move(*slices);
-        assert(sum_constraints.size() == resolved.size());
-    } else {
-        resolved.reserve(sum_constraints.size());
-        const std::vector<ssize_t> multi_index = unravel_index(index, node_.shape());
-        assert(sum_constraints.size() <= multi_index.size());
-        for (ssize_t i = 0, stop = static_cast<ssize_t>(sum_constraints.size()); i < stop; ++i) {
-            const std::optional<const ssize_t> axis = sum_constraints[i].axis();
-            /// Determine the "slice" that index lies on given the sum constraint.
-            /// If `axis == std::nullopt`, the array is treated as a flat array with
-            /// a single slice. Otherwise, the slice is defined by multi_index.
-            assert(!axis.has_value() || *axis < static_cast<ssize_t>(multi_index.size()));
-            resolved.push_back(axis.has_value() ? multi_index[*axis] : 0);
-        }
-    }
+    std::vector<ssize_t> resolved = resolve_slices_(index, std::move(slices));
 
     // Apply the change to each sum constraint's running sum.
-    for (ssize_t i = 0, stop = static_cast<ssize_t>(sum_constraints.size()); i < stop; ++i) {
+    for (ssize_t i = 0, stop = static_cast<ssize_t>(resolved.size()); i < stop; ++i) {
         const ssize_t slice = resolved[i];
-        // Sanity check that the slice for `index` is correct.
-        assert(([&]() {
-            const std::optional<const ssize_t> axis = sum_constraints[i].axis();
-            if (!axis.has_value()) return slice == 0;
-            return slice == unravel_index(index, node_.shape())[*axis];
-        })());
         assert(0 <= slice && slice < static_cast<ssize_t>(sum_constraints_lhs[i].size()));
         sum_constraints_lhs[i][slice] += difference;  // Offset slice sum.
-        track_index_(i, index, slice, difference);    // Subclass bookkeeping hook.
     }
     slice_cache_.emplace_back(std::move(resolved));  // Cache the slices.
 }
@@ -1305,44 +1313,85 @@ struct BinaryNodeStateData : public NumberNodeStateData {
         return std::make_unique<BinaryNodeStateData>(*this);
     }
 
+    /// Revert the state dependent data of BinaryNode. In addition to the base
+    /// (running sums), restore `slice_indices`.
+    void revert() override;
+
     /// A collection of DisjointSparseSet, one per sum constraint.
     std::vector<DisjointSparseSet> slice_indices;
 
  protected:
-    /// In addition to the running sums, maintain `slice_indices`.
-    void track_index_(
-        const ssize_t constraint,
+    /// Update the running sums as the base does, and additionally maintain
+    /// `slice_indices` in the same loop (no per-constraint virtual call).
+    void update_(
         const ssize_t index,
-        const ssize_t slice,
-        const double difference
-    ) override {
-        assert(difference == 1.0 || difference == -1.0);
-        // If value changed from 0 -> 1, update by 1; from 1 -> 0, update by -1.
-        if (difference == 1.0) {
-            slice_indices[constraint].update_true(index, slice);
-        } else {
-            slice_indices[constraint].update_false(index, slice);
-        }
-    }
-
-    /// Inverse of `track_index_`, keyed on the value being reverted to.
-    void untrack_index_(
-        const ssize_t constraint,
-        const Update& update,
-        const ssize_t slice
-    ) override {
-        if (update.value) {
-            slice_indices[constraint].update_false(update.index, slice);
-        } else {
-            assert(update.old == 1.0);
-            slice_indices[constraint].update_true(update.index, slice);
-        }
-    }
+        const double difference,
+        std::optional<std::vector<ssize_t>> slices
+    ) override;
 
  private:
     /// Populate `slice_indices` given the node (`node_`) and its assigned values.
     void compute_slice_indices_();
 };
+
+void BinaryNodeStateData::revert() {
+    // Undo changes to `sum_constraints_lhs` and `slice_indices` given the
+    // `slice_cache_`.
+    if (slice_cache_.size() > 0) {
+        std::span<const Update> updates = ArrayNodeStateData::diff();
+        assert(updates.size() == slice_cache_.size());
+
+        // Iterate over the updates in reverse order. This is important
+        // since a single index may have been updated multiple times.
+        for (ssize_t i = static_cast<ssize_t>(updates.size()) - 1; i >= 0; --i) {
+            const Update& update = updates[i];
+            const double difference = update.value - update.old;
+            assert(difference == 1.0 || difference == -1.0);
+            const std::vector<ssize_t>& slices = slice_cache_[i];
+
+            // Reverse the change applied to each running sum and slice.
+            for (ssize_t j = static_cast<ssize_t>(slices.size()) - 1; j >= 0; --j) {
+                sum_constraints_lhs[j][slices[j]] -= difference;
+                if (update.value) {
+                    slice_indices[j].update_false(update.index, slices[j]);
+                } else {
+                    assert(update.old == 1.0);
+                    slice_indices[j].update_true(update.index, slices[j]);
+                }
+            }
+        }
+        slice_cache_.clear();  // Empty the slice cache.
+    }
+
+    ArrayNodeStateData::revert();  // Revert changes to the buffer.
+}
+
+void BinaryNodeStateData::update_(
+    const ssize_t index,
+    const double difference,
+    std::optional<std::vector<ssize_t>> slices
+) {
+    assert(node_.sum_constraints().size() != 0);  // Should only call where applicable.
+    assert(difference == 1 || difference == -1);
+    assert(node_.sum_constraints().size() == sum_constraints_lhs.size());
+    assert(node_.sum_constraints().size() == slice_indices.size());
+
+    std::vector<ssize_t> resolved = resolve_slices_(index, std::move(slices));
+
+    // Apply the change to each sum constraint's running sum and tracked indices.
+    for (ssize_t i = 0, stop = static_cast<ssize_t>(resolved.size()); i < stop; ++i) {
+        const ssize_t slice = resolved[i];
+        assert(0 <= slice && slice < static_cast<ssize_t>(sum_constraints_lhs[i].size()));
+        sum_constraints_lhs[i][slice] += difference;  // Offset slice sum.
+        // If value changed from 0 -> 1, update by 1; from 1 -> 0, update by -1.
+        if (difference == 1.0) {
+            slice_indices[i].update_true(index, slice);
+        } else {
+            slice_indices[i].update_false(index, slice);
+        }
+    }
+    slice_cache_.emplace_back(std::move(resolved));  // Cache the slices.
+}
 
 void BinaryNodeStateData::compute_slice_indices_() {
     const auto& sum_constraints = node_.sum_constraints();

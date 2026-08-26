@@ -1,0 +1,3 @@
+---
+features:
+  - Add a simple C++ ``dwave::optimization::interval`` class.

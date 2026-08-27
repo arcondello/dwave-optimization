@@ -1,0 +1,8 @@
+---
+features:
+  - Make ``UnaryOpNode`` header-only.
+  - |
+    Rework C++ unary ops in ``dwave::optimization::functional`` to provide additional
+    information about the functions.
+upgrade:
+  - Rename C++ ``abs()`` function to ``absolute()``.

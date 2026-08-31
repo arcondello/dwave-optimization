@@ -230,7 +230,7 @@ struct modulus {
     }
 };
 
-struct negate : UnaryOpMixin<negate> {
+struct negative : UnaryOpMixin<negative> {
     template <class T>
     requires(DType<T> and not std::same_as<T, bool>)  // not defined for bool
     static auto operator()(const T& x) {

@@ -23,7 +23,7 @@ template class UnaryOpNode<functional::expit>;
 template class UnaryOpNode<functional::log>;
 template class UnaryOpNode<functional::logical>;
 template class UnaryOpNode<functional::logical_not>;
-template class UnaryOpNode<functional::negate>;
+template class UnaryOpNode<functional::negative>;
 template class UnaryOpNode<functional::rint>;
 template class UnaryOpNode<functional::sin>;
 template class UnaryOpNode<functional::square>;

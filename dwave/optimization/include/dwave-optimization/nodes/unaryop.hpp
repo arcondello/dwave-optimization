@@ -295,8 +295,8 @@ extern template class UnaryOpNode<functional::log>;
 using LogicalNode = UnaryOpNode<functional::logical>;
 extern template class UnaryOpNode<functional::logical>;
 
-using NegativeNode = UnaryOpNode<functional::negate>;
-extern template class UnaryOpNode<functional::negate>;
+using NegativeNode = UnaryOpNode<functional::negative>;
+extern template class UnaryOpNode<functional::negative>;
 
 using NotNode = UnaryOpNode<functional::logical_not>;
 extern template class UnaryOpNode<functional::logical_not>;

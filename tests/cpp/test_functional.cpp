@@ -270,10 +270,10 @@ TEMPLATE_LIST_TEST_CASE("modulus", "", DTypes) {
     }
 }
 
-TEMPLATE_LIST_TEST_CASE("negate", "", DTypes) {
-    constexpr negate op{};
+TEMPLATE_LIST_TEST_CASE("negative", "", DTypes) {
+    constexpr negative op{};
     if constexpr (not std::same_as<TestType, bool>) {
-        SECTION("negate(scalar)") {
+        SECTION("negative(scalar)") {
             CHECK(op(TestType(0)) == 0);
 
             if constexpr (std::integral<TestType>) {
@@ -285,7 +285,7 @@ TEMPLATE_LIST_TEST_CASE("negate", "", DTypes) {
             }
         }
 
-        SECTION("negate(interval)") {
+        SECTION("negative(interval)") {
             CHECK(not op(interval<TestType>()));  // op(empty) -> empty
 
             CHECK(op(interval<TestType>(0, 1)) == interval(op(TestType(1)), op(TestType(0))));

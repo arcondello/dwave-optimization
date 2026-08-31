@@ -39,7 +39,7 @@ TEMPLATE_TEST_CASE(
     functional::expit,
     functional::logical,
     functional::logical_not,
-    functional::negate,
+    functional::negative,
     functional::rint,
     functional::sin,
     functional::square,

@@ -204,20 +204,10 @@ class NumberNodeStateData : public ArrayNodeStateData, public CheckpointableStat
             // If change occurred and sum constraint exist, update running sums.
             if (node_.sum_constraints().size() > 0) {
                 const double difference = get(i) - get(j);
-
-                if (i_slices.has_value()) {
-                    assert(j_slices.has_value());
-                    // Index i changed from (what is now) ptr->get(j) to ptr->get(i)
-                    update_(i, difference, *i_slices);
-                    // Index j changed from (what is now) ptr->get(i) to ptr->get(j)
-                    update_(j, -difference, *j_slices);
-                } else {
-                    assert(!j_slices.has_value());
-                    // Index i changed from (what is now) ptr->get(j) to ptr->get(i)
-                    update_(i, difference);
-                    // Index j changed from (what is now) ptr->get(i) to ptr->get(j)
-                    update_(j, -difference);
-                }
+                // Index i changed from (what is now) ptr->get(j) to ptr->get(i)
+                update_(i, difference, std::move(i_slices));
+                // Index j changed from (what is now) ptr->get(i) to ptr->get(j)
+                update_(j, -difference, std::move(j_slices));
             }
         }
     }
@@ -229,11 +219,7 @@ class NumberNodeStateData : public ArrayNodeStateData, public CheckpointableStat
     /// Revert the state dependent data of NumberNode.
     void revert();
 
-    void set(
-        ssize_t index,
-        double value,
-        std::optional<std::vector<ssize_t>> slices
-    ) {
+    void set(ssize_t index, double value, std::optional<std::vector<ssize_t>> slices) {
         // We expect `value` to obey the index-wise bounds and integrality
         assert(node_.lower_bound(index) <= value);
         assert(node_.upper_bound(index) >= value);
@@ -244,11 +230,7 @@ class NumberNodeStateData : public ArrayNodeStateData, public CheckpointableStat
         if (ArrayNodeStateData::set(index, value)) {
             // If change occurred and sum constraint exist, update running sums.
             if (node_.sum_constraints().size() > 0) {
-                if (slices.has_value()) {
-                    update_(index, value - diff().back().old, *slices);
-                } else {
-                    update_(index, value - diff().back().old);
-                }
+                update_(index, value - diff().back().old, std::move(slices));
             }
         }
     }

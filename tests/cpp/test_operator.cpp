@@ -343,11 +343,11 @@ TEMPLATE_LIST_TEST_CASE("divide", "", DTypes) {
     }
 
     SECTION("op(interval, interval)") {
-        if constexpr (std::floating_point<TestType>) {
-            constexpr interval<TestType> zero(0, 0);
-            constexpr interval<TestType> one(1, 1);
-            constexpr interval<TestType> both(0, 1);
+        constexpr interval<TestType> zero(0, 0);
+        constexpr interval<TestType> one(1, 1);
+        constexpr interval<TestType> both(0, 1);
 
+        if constexpr (std::floating_point<TestType>) {
             constexpr TestType inf = limits::infinity();
 
             STATIC_REQUIRE(std::same_as<decltype(op(zero, zero)), interval<TestType>>);

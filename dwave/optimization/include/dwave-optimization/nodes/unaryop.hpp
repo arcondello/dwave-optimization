@@ -105,6 +105,7 @@ class UnaryOpNode : public ArrayOutputMixin<ArrayNode> {
         const auto array_diff = array_ptr_->diff(state);
 
         // If there are no updates the handle, return early.
+        // TODO: there is a bug here for (n, 0) arrays
         if (array_diff.empty()) return;
 
         auto* state_ptr = data_ptr_<UnaryOpState_>(state);

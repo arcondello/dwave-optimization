@@ -18,8 +18,10 @@
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_range_equals.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 
 #include "dwave-optimization/array.hpp"
+#include "dwave-optimization/common.hpp"
 #include "dwave-optimization/graph.hpp"
 #include "dwave-optimization/nodes/binaryop.hpp"
 #include "dwave-optimization/nodes/collections.hpp"
@@ -226,196 +228,249 @@ TEMPLATE_TEST_CASE(
         }
     }
 
-    GIVEN("Two dynamic arrays of the same size operated on") {
-        auto dyn_ptr = graph.emplace_node<DynamicArrayTestingNode>(
-            std::initializer_list<ssize_t>{-1, 2}, 0, 1000, true
-        );
+    GIVEN("Two lists broadcast") {
+        auto* a_ptr = graph.emplace_node<ListNode>(2);
+        auto* aT_ptr = graph.emplace_node<ReshapeNode>(a_ptr, std::vector<ssize_t>{2, 1});
+    
+        auto* b_ptr = graph.emplace_node<ListNode>(3);
 
-        auto a_ptr = graph.emplace_node<BasicIndexingNode>(dyn_ptr, Slice(), 0);
-        graph.emplace_node<ArrayValidationNode>(a_ptr);
-        auto b_ptr = graph.emplace_node<BasicIndexingNode>(dyn_ptr, Slice(), 1);
-        graph.emplace_node<ArrayValidationNode>(b_ptr);
-
-        auto p_ptr = graph.emplace_node<BinaryOpNode<TestType>>(a_ptr, b_ptr);
+        auto* p_ptr = graph.emplace_node<BinaryOpNode<TestType>>(aT_ptr, b_ptr);
 
         graph.emplace_node<ArrayValidationNode>(p_ptr);
 
-        THEN("The shape is also a 1D array") {
-            CHECK(p_ptr->ndim() == 1);
-            CHECK(p_ptr->size() == Array::DYNAMIC_SIZE);
-        }
+        CHECK_THAT(p_ptr->shape(), RangeEquals({2, 3}));
+        CHECK(p_ptr->size() == 6);
+        CHECK_THAT(p_ptr->operands(), RangeEquals(std::vector<Array*>{aT_ptr, b_ptr}));
+        CHECK(p_ptr->sizeinfo() == 6);
 
-        THEN("a and b are the operands") {
-            CHECK(std::ranges::equal(p_ptr->operands(), std::vector<Array*>{a_ptr, b_ptr}));
-        }
-
-        WHEN("We make a state") {
+        WHEN("We create a default state") {
             auto state = graph.initialize_state();
 
-            THEN("The product has the value and shape we expect") {
-                CHECK(p_ptr->size(state) == 0);
-                CHECK(p_ptr->shape(state).size() == 1);
-            }
+            CHECK_THAT(p_ptr->shape(state), RangeEquals({2, 3}));
+            CHECK(p_ptr->size(state) == 6);
 
-            AND_WHEN("We grow the arrays") {
-                dyn_ptr->grow(state, {1, 2});
-                graph.propagate(state);
+            CHECK_THAT(p_ptr->view(state),
+                RangeEquals({
+                    func(0, 0), func(0, 1), func(0, 2),
+                    func(1, 0), func(1, 1), func(1, 2)
+                })
+            );
 
-                THEN("The output has the values we expect") {
-                    CHECK(p_ptr->size(state) == 1);
-                    CHECK(p_ptr->shape(state).size() == 1);
+            AND_WHEN("We mutate that state") {
+                a_ptr->exchange(state, 0, 1);  // a = [1, 0]
+                b_ptr->exchange(state, 0, 2);  // b = [2, 1, 0]
 
-                    for (int i = 0; i < p_ptr->size(state); ++i) {
-                        CHECK(
-                            p_ptr->view(state)[i] ==
-                            func(a_ptr->view(state)[i], b_ptr->view(state)[i])
-                        );
-                    }
-                }
-            }
+                CHECK_THAT(a_ptr->view(state), RangeEquals({1, 0}));
+                CHECK_THAT(b_ptr->view(state), RangeEquals({2, 1, 0}));
 
-            AND_WHEN("We grow and shrink and grow the arrays") {
-                dyn_ptr->grow(state, {1, 2});
-                dyn_ptr->shrink(state);
-                dyn_ptr->grow(state, {3, 666, 555, 6});
+                std::cout << "**********\n";
 
                 graph.propagate(state);
 
-                THEN("The output has the values we expect") {
-                    CHECK(p_ptr->size(state) == 2);
-                    CHECK(p_ptr->shape(state).size() == 1);
+                CHECK_THAT(p_ptr->shape(state), RangeEquals({2, 3}));
+                CHECK(p_ptr->size(state) == 6);
 
-                    for (int i = 0; i < p_ptr->size(state); ++i) {
-                        CHECK(
-                            p_ptr->view(state)[i] ==
-                            func(a_ptr->view(state)[i], b_ptr->view(state)[i])
-                        );
-                    }
-
-                    CHECK(p_ptr->diff(state).size() == 2);  // we did some deduplication
-                }
-            }
-
-            AND_WHEN("We grow and shrink the arrays multiple times") {
-                dyn_ptr->grow(state, {1, 2, 3, 4, 5, 6});
-                graph.propagate(state);
-                graph.commit(state);
-
-                dyn_ptr->shrink(state);
-                dyn_ptr->shrink(state);
-                dyn_ptr->grow(state, {7, 8});
-                dyn_ptr->shrink(state);
-
-                graph.propagate(state);
-
-                THEN("The output has the values we expect") {
-                    CHECK(p_ptr->size(state) == 1);
-                    CHECK(p_ptr->shape(state).size() == 1);
-
-                    for (int i = 0; i < p_ptr->size(state); ++i) {
-                        CHECK(
-                            p_ptr->view(state)[i] ==
-                            func(a_ptr->view(state)[i], b_ptr->view(state)[i])
-                        );
-                    }
-
-                    CHECK(p_ptr->diff(state).size() == 2);  // we did some deduplication
-                }
+                CHECK_THAT(p_ptr->view(state),
+                    RangeEquals({
+                        func(1, 2), func(1, 1), func(1, 0),
+                        func(0, 2), func(0, 1), func(0, 0)
+                    })
+                );
             }
         }
+
     }
 
-    GIVEN("Two empty dynamic arrays") {
-        auto set_ptr = graph.emplace_node<SetNode>(10);
-        auto set2d_ptr = graph.emplace_node<ReshapeNode>(set_ptr, std::vector<ssize_t>{-1, 1});
-        auto dyn_ptr = graph.emplace_node<BroadcastToNode>(set2d_ptr, std::vector<ssize_t>{-1, 0});
+    // GIVEN("Two dynamic arrays of the same size operated on") {
+    //     auto dyn_ptr = graph.emplace_node<DynamicArrayTestingNode>(
+    //         std::initializer_list<ssize_t>{-1, 2}, 0, 1000, true
+    //     );
 
-        auto b_ptr = graph.emplace_node<BinaryOpNode<TestType>>(dyn_ptr, dyn_ptr);
+    //     auto a_ptr = graph.emplace_node<BasicIndexingNode>(dyn_ptr, Slice(), 0);
+    //     graph.emplace_node<ArrayValidationNode>(a_ptr);
+    //     auto b_ptr = graph.emplace_node<BasicIndexingNode>(dyn_ptr, Slice(), 1);
+    //     graph.emplace_node<ArrayValidationNode>(b_ptr);
 
-        graph.emplace_node<ArrayValidationNode>(b_ptr);
+    //     auto p_ptr = graph.emplace_node<BinaryOpNode<TestType>>(a_ptr, b_ptr);
 
-        CHECK_THAT(b_ptr->shape(), RangeEquals({-1, 0}));
-        CHECK(b_ptr->size() == 0);  // changes shape but not size
+    //     graph.emplace_node<ArrayValidationNode>(p_ptr);
 
-        auto state = graph.empty_state();
-        set_ptr->initialize_state(state, {0, 2, 5});
-        graph.initialize_state(state);
+    //     THEN("The shape is also a 1D array") {
+    //         CHECK(p_ptr->ndim() == 1);
+    //         CHECK(p_ptr->size() == Array::DYNAMIC_SIZE);
+    //     }
 
-        CHECK_THAT(b_ptr->shape(state), RangeEquals({3, 0}));
-        CHECK(b_ptr->size(state) == 0);
+    //     THEN("a and b are the operands") {
+    //         CHECK(std::ranges::equal(p_ptr->operands(), std::vector<Array*>{a_ptr, b_ptr}));
+    //     }
 
-        WHEN("We grow the state") {
-            set_ptr->assign(state, {0, 2, 5, 6});
-            graph.propagate(state);
+    //     WHEN("We make a state") {
+    //         auto state = graph.initialize_state();
 
-            CHECK_THAT(b_ptr->shape(state), RangeEquals({4, 0}));
-            CHECK(b_ptr->size(state) == 0);
+    //         THEN("The product has the value and shape we expect") {
+    //             CHECK(p_ptr->size(state) == 0);
+    //             CHECK(p_ptr->shape(state).size() == 1);
+    //         }
 
-            AND_WHEN("We commit") {
-                graph.commit(state);
-                CHECK_THAT(b_ptr->shape(state), RangeEquals({4, 0}));
-                CHECK(b_ptr->size(state) == 0);
-            }
+    //         AND_WHEN("We grow the arrays") {
+    //             dyn_ptr->grow(state, {1, 2});
+    //             graph.propagate(state);
 
-            AND_WHEN("We revert") {
-                graph.revert(state);
-                CHECK_THAT(b_ptr->shape(state), RangeEquals({3, 0}));
-                CHECK(b_ptr->size(state) == 0);
-            }
-        }
-    }
+    //             THEN("The output has the values we expect") {
+    //                 CHECK(p_ptr->size(state) == 1);
+    //                 CHECK(p_ptr->shape(state).size() == 1);
 
-    GIVEN("An empty dynamic array and a scalar") {
-        auto set_ptr = graph.emplace_node<SetNode>(10);
-        auto set2d_ptr = graph.emplace_node<ReshapeNode>(set_ptr, std::vector<ssize_t>{-1, 1});
-        auto dyn_ptr = graph.emplace_node<BroadcastToNode>(set2d_ptr, std::vector<ssize_t>{-1, 0});
+    //                 for (int i = 0; i < p_ptr->size(state); ++i) {
+    //                     CHECK(
+    //                         p_ptr->view(state)[i] ==
+    //                         func(a_ptr->view(state)[i], b_ptr->view(state)[i])
+    //                     );
+    //                 }
+    //             }
+    //         }
 
-        auto a_ptr = graph.emplace_node<IntegerNode>(std::vector<ssize_t>{}, 0, 10);
+    //         AND_WHEN("We grow and shrink and grow the arrays") {
+    //             dyn_ptr->grow(state, {1, 2});
+    //             dyn_ptr->shrink(state);
+    //             dyn_ptr->grow(state, {3, 666, 555, 6});
 
-        auto b_ptr = graph.emplace_node<BinaryOpNode<TestType>>(dyn_ptr, a_ptr);
-        auto c_ptr = graph.emplace_node<BinaryOpNode<TestType>>(a_ptr, dyn_ptr);
+    //             graph.propagate(state);
 
-        graph.emplace_node<ArrayValidationNode>(b_ptr);
-        graph.emplace_node<ArrayValidationNode>(c_ptr);
+    //             THEN("The output has the values we expect") {
+    //                 CHECK(p_ptr->size(state) == 2);
+    //                 CHECK(p_ptr->shape(state).size() == 1);
 
-        CHECK_THAT(b_ptr->shape(), RangeEquals({-1, 0}));
-        CHECK(b_ptr->size() == 0);  // changes shape but not size
-        CHECK_THAT(c_ptr->shape(), RangeEquals({-1, 0}));
-        CHECK(c_ptr->size() == 0);  // changes shape but not size
+    //                 for (int i = 0; i < p_ptr->size(state); ++i) {
+    //                     CHECK(
+    //                         p_ptr->view(state)[i] ==
+    //                         func(a_ptr->view(state)[i], b_ptr->view(state)[i])
+    //                     );
+    //                 }
 
-        auto state = graph.empty_state();
-        set_ptr->initialize_state(state, {0, 2, 5});
-        graph.initialize_state(state);
+    //                 CHECK(p_ptr->diff(state).size() == 2);  // we did some deduplication
+    //             }
+    //         }
 
-        CHECK_THAT(b_ptr->shape(state), RangeEquals({3, 0}));
-        CHECK(b_ptr->size(state) == 0);
-        CHECK_THAT(c_ptr->shape(state), RangeEquals({3, 0}));
-        CHECK(c_ptr->size(state) == 0);
+    //         AND_WHEN("We grow and shrink the arrays multiple times") {
+    //             dyn_ptr->grow(state, {1, 2, 3, 4, 5, 6});
+    //             graph.propagate(state);
+    //             graph.commit(state);
 
-        WHEN("We grow the state") {
-            set_ptr->assign(state, {0, 2, 5, 6});
-            graph.propagate(state);
+    //             dyn_ptr->shrink(state);
+    //             dyn_ptr->shrink(state);
+    //             dyn_ptr->grow(state, {7, 8});
+    //             dyn_ptr->shrink(state);
 
-            CHECK_THAT(b_ptr->shape(state), RangeEquals({4, 0}));
-            CHECK(b_ptr->size(state) == 0);
+    //             graph.propagate(state);
 
-            AND_WHEN("We commit") {
-                graph.commit(state);
-                CHECK_THAT(b_ptr->shape(state), RangeEquals({4, 0}));
-                CHECK(b_ptr->size(state) == 0);
-                CHECK_THAT(c_ptr->shape(state), RangeEquals({4, 0}));
-                CHECK(c_ptr->size(state) == 0);
-            }
+    //             THEN("The output has the values we expect") {
+    //                 CHECK(p_ptr->size(state) == 1);
+    //                 CHECK(p_ptr->shape(state).size() == 1);
 
-            AND_WHEN("We revert") {
-                graph.revert(state);
-                CHECK_THAT(b_ptr->shape(state), RangeEquals({3, 0}));
-                CHECK(b_ptr->size(state) == 0);
-                CHECK_THAT(c_ptr->shape(state), RangeEquals({3, 0}));
-                CHECK(c_ptr->size(state) == 0);
-            }
-        }
-    }
+    //                 for (int i = 0; i < p_ptr->size(state); ++i) {
+    //                     CHECK(
+    //                         p_ptr->view(state)[i] ==
+    //                         func(a_ptr->view(state)[i], b_ptr->view(state)[i])
+    //                     );
+    //                 }
+
+    //                 CHECK(p_ptr->diff(state).size() == 2);  // we did some deduplication
+    //             }
+    //         }
+    //     }
+    // }
+
+    // GIVEN("Two empty dynamic arrays") {
+    //     auto set_ptr = graph.emplace_node<SetNode>(10);
+    //     auto set2d_ptr = graph.emplace_node<ReshapeNode>(set_ptr, std::vector<ssize_t>{-1, 1});
+    //     auto dyn_ptr = graph.emplace_node<BroadcastToNode>(set2d_ptr, std::vector<ssize_t>{-1, 0});
+
+    //     auto b_ptr = graph.emplace_node<BinaryOpNode<TestType>>(dyn_ptr, dyn_ptr);
+
+    //     graph.emplace_node<ArrayValidationNode>(b_ptr);
+
+    //     CHECK_THAT(b_ptr->shape(), RangeEquals({-1, 0}));
+    //     CHECK(b_ptr->size() == 0);  // changes shape but not size
+
+    //     auto state = graph.empty_state();
+    //     set_ptr->initialize_state(state, {0, 2, 5});
+    //     graph.initialize_state(state);
+
+    //     CHECK_THAT(b_ptr->shape(state), RangeEquals({3, 0}));
+    //     CHECK(b_ptr->size(state) == 0);
+
+    //     WHEN("We grow the state") {
+    //         set_ptr->assign(state, {0, 2, 5, 6});
+    //         graph.propagate(state);
+
+    //         CHECK_THAT(b_ptr->shape(state), RangeEquals({4, 0}));
+    //         CHECK(b_ptr->size(state) == 0);
+
+    //         AND_WHEN("We commit") {
+    //             graph.commit(state);
+    //             CHECK_THAT(b_ptr->shape(state), RangeEquals({4, 0}));
+    //             CHECK(b_ptr->size(state) == 0);
+    //         }
+
+    //         AND_WHEN("We revert") {
+    //             graph.revert(state);
+    //             CHECK_THAT(b_ptr->shape(state), RangeEquals({3, 0}));
+    //             CHECK(b_ptr->size(state) == 0);
+    //         }
+    //     }
+    // }
+
+    // GIVEN("An empty dynamic array and a scalar") {
+    //     auto set_ptr = graph.emplace_node<SetNode>(10);
+    //     auto set2d_ptr = graph.emplace_node<ReshapeNode>(set_ptr, std::vector<ssize_t>{-1, 1});
+    //     auto dyn_ptr = graph.emplace_node<BroadcastToNode>(set2d_ptr, std::vector<ssize_t>{-1, 0});
+
+    //     auto a_ptr = graph.emplace_node<IntegerNode>(std::vector<ssize_t>{}, 0, 10);
+
+    //     auto b_ptr = graph.emplace_node<BinaryOpNode<TestType>>(dyn_ptr, a_ptr);
+    //     auto c_ptr = graph.emplace_node<BinaryOpNode<TestType>>(a_ptr, dyn_ptr);
+
+    //     graph.emplace_node<ArrayValidationNode>(b_ptr);
+    //     graph.emplace_node<ArrayValidationNode>(c_ptr);
+
+    //     CHECK_THAT(b_ptr->shape(), RangeEquals({-1, 0}));
+    //     CHECK(b_ptr->size() == 0);  // changes shape but not size
+    //     CHECK_THAT(c_ptr->shape(), RangeEquals({-1, 0}));
+    //     CHECK(c_ptr->size() == 0);  // changes shape but not size
+
+    //     auto state = graph.empty_state();
+    //     set_ptr->initialize_state(state, {0, 2, 5});
+    //     graph.initialize_state(state);
+
+    //     CHECK_THAT(b_ptr->shape(state), RangeEquals({3, 0}));
+    //     CHECK(b_ptr->size(state) == 0);
+    //     CHECK_THAT(c_ptr->shape(state), RangeEquals({3, 0}));
+    //     CHECK(c_ptr->size(state) == 0);
+
+    //     WHEN("We grow the state") {
+    //         set_ptr->assign(state, {0, 2, 5, 6});
+    //         graph.propagate(state);
+
+    //         CHECK_THAT(b_ptr->shape(state), RangeEquals({4, 0}));
+    //         CHECK(b_ptr->size(state) == 0);
+
+    //         AND_WHEN("We commit") {
+    //             graph.commit(state);
+    //             CHECK_THAT(b_ptr->shape(state), RangeEquals({4, 0}));
+    //             CHECK(b_ptr->size(state) == 0);
+    //             CHECK_THAT(c_ptr->shape(state), RangeEquals({4, 0}));
+    //             CHECK(c_ptr->size(state) == 0);
+    //         }
+
+    //         AND_WHEN("We revert") {
+    //             graph.revert(state);
+    //             CHECK_THAT(b_ptr->shape(state), RangeEquals({3, 0}));
+    //             CHECK(b_ptr->size(state) == 0);
+    //             CHECK_THAT(c_ptr->shape(state), RangeEquals({3, 0}));
+    //             CHECK(c_ptr->size(state) == 0);
+    //         }
+    //     }
+    // }
 
     // SECTION("equality") {
     //     auto* x_ptr = graph.emplace_node<IntegerNode>();

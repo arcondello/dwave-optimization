@@ -314,7 +314,10 @@ std::vector<ssize_t> broadcast_index_to(
         multiplier *= to;
     }
 
+    // Offsets should always be sorted and unique.
     assert(std::ranges::is_sorted(offsets));
+    assert(std::ranges::adjacent_find(offsets) == offsets.end());
+
     return offsets;
 }
 
@@ -372,6 +375,17 @@ std::vector<ssize_t> broadcast_shapes(
     }
 
     return shape;
+}
+
+std::vector<ssize_t> broadcast_shapes(const Array& lhs, const Array& rhs) {
+    // First get the broadcasted shape. This will cover all of the cases we
+    // care about except when broadcasting two dynamic arrays together.
+    auto shape = broadcast_shapes(lhs.shape(), rhs.shape());
+
+    // If we're not dynamic, then we're done
+    if (shape.empty() or shape[0] >= 0) return shape;
+
+    assert(false and "not yet implemented");
 }
 
 std::vector<ssize_t> broadcast_strides_to(

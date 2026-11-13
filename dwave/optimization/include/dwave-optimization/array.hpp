@@ -707,6 +707,7 @@ std::vector<ssize_t> broadcast_index_to(
 /// See https://numpy.org/doc/stable/user/basics.broadcasting.html.
 /// Raises an exception if the two arrays cannot be broadcast together
 std::vector<ssize_t> broadcast_shapes(std::span<const ssize_t> lhs, std::span<const ssize_t> rhs);
+
 template <std::convertible_to<std::span<const ssize_t>>... Shapes>
 std::vector<ssize_t> broadcast_shapes(std::span<const ssize_t> shape, Shapes... shapes) {
     std::vector<ssize_t> out = std::ranges::to<std::vector<ssize_t>>(shape);
@@ -717,6 +718,11 @@ std::vector<ssize_t> broadcast_shapes(std::span<const ssize_t> shape, Shapes... 
 
     return out;
 }
+
+/// Get the shape induced by broadcasting two arrays together.
+/// If the arrays are dynamic, additionally checks that their ``sizeinfo`` are
+/// compatible.
+std::vector<ssize_t> broadcast_shapes(const Array& lhs, const Array& rhs);
 
 /// Get the strides that would broadcast an array with ``from_shape`` and ``from_strides``
 /// to an array with shape ``to_shape``.

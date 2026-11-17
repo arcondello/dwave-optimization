@@ -18,6 +18,7 @@
 #include <array>
 #include <cassert>
 #include <concepts>
+#include <cstddef>
 #include <iterator>
 #include <memory>
 #include <ranges>
@@ -102,33 +103,16 @@ class BinaryOpNode : public ArrayOutputMixin<EqualityMixin<ArrayNode, BinaryOpNo
     }
 
     void initialize_state(State& state) const override {
-        // Dev note: this can all easily be re-written for N operands, but
-        // it's a lot harder to read the syntax so for now we'll hard-code
-        // binary.
+        auto broadcaster = broadcast_(operands_[0], operands_[1]);
 
-        // We want to be able to broadcast our arrays together.
-        // For that we need the strides over the array that would induce our shape
-        // as well as the indices we need to broadcast each update in our predecessors.
-        std::array<std::vector<ssize_t>, 2> operand_strides{
-            broadcast_strides_to(operands_[0]->shape(), operands_[0]->strides(), this->shape()),
-            broadcast_strides_to(operands_[1]->shape(), operands_[1]->strides(), this->shape())
-        };
-        std::array<std::vector<ssize_t>, 2> operand_indices{
-            broadcast_index_to(operands_[0]->shape(), this->shape()),
-            broadcast_index_to(operands_[1]->shape(), this->shape())
-        };
+        // See note on broadcast_::statefull_shape_
+        broadcaster.update_shape(state);
 
-        // Determine our current shape
-        std::vector<ssize_t> shape = std::ranges::to<std::vector>(this->shape());
-        if (shape.size() and shape[0] < 0) {
-            assert(false and "not yet implemented");
-        }
+        // Read our statefull shape off of our predecessors for later caching
+        std::vector<ssize_t> shape = std::ranges::to<std::vector>(broadcaster.shape(state));
 
-        // From that, we can get the views into our predecessors of the size we want
-        std::ranges::sized_range auto lhs_view =
-            operand_view_(operands_[0]->buff(state), shape, operand_strides[0]);
-        std::ranges::sized_range auto rhs_view =
-            operand_view_(operands_[1]->buff(state), shape, operand_strides[1]);
+        // Get views of our predecessors
+        const auto [lhs_view, rhs_view] = broadcaster.views(state);
         assert(std::size(lhs_view) == std::size(rhs_view));
 
         // And from those, it's easy to get our buffer
@@ -139,34 +123,29 @@ class BinaryOpNode : public ArrayOutputMixin<EqualityMixin<ArrayNode, BinaryOpNo
             })
         );
 
-        /// TODO REMOVE *******
-        std::cout << "&&&&&&&&&&&&&\n";
-        for (auto v : operand_strides[0]) std::cout << v << " ";
-        std::cout << " <- lhs_strides ****\n";
-        for (auto v : operand_strides[1]) std::cout << v << " ";
-        std::cout << " <- rhs_strides ****\n";
-        for (auto v : operand_indices[0]) std::cout << v << " ";
-        std::cout << " <- lhs indices ****\n";
-        for (auto v : operand_indices[1]) std::cout << v << " ";
-        std::cout << " <- rhs indices ****\n";
-        for (auto v : lhs_view) std::cout << v << " ";
-        std::cout << " <- lhs_view ****\n";
-        for (auto v : rhs_view) std::cout << v << " ";
-        std::cout << " <- rhs_view ****\n";
-        for (auto v : shape) std::cout << v << " ";
-        std::cout << " <- shape ****\n";
-        for (auto v : buffer) std::cout << v << " ";
-        std::cout << " <- buffer ****\n";
-        /// *******************
-
+        // /// TODO REMOVE *******
+        // std::cout << "&&&&&&&&&&&&&\n";
+        // for (auto v : operand_strides[0]) std::cout << v << " ";
+        // std::cout << " <- lhs_strides ****\n";
+        // for (auto v : operand_strides[1]) std::cout << v << " ";
+        // std::cout << " <- rhs_strides ****\n";
+        // for (auto v : operand_indices[0]) std::cout << v << " ";
+        // std::cout << " <- lhs indices ****\n";
+        // for (auto v : operand_indices[1]) std::cout << v << " ";
+        // std::cout << " <- rhs indices ****\n";
+        // for (auto v : lhs_view) std::cout << v << " ";
+        // std::cout << " <- lhs_view ****\n";
+        // for (auto v : rhs_view) std::cout << v << " ";
+        // std::cout << " <- rhs_view ****\n";
+        // for (auto v : shape) std::cout << v << " ";
+        // std::cout << " <- shape ****\n";
+        // for (auto v : buffer) std::cout << v << " ";
+        // std::cout << " <- buffer ****\n";
+        // /// *******************
 
         // Store everything on the state
         this->template emplace_data_ptr_<BinaryOpState_>(
-            state,
-            std::move(operand_strides),
-            std::move(operand_indices),
-            std::move(shape),
-            std::move(buffer)
+            state, std::move(broadcaster), std::move(shape), std::move(buffer)
         );
     }
 
@@ -196,9 +175,8 @@ class BinaryOpNode : public ArrayOutputMixin<EqualityMixin<ArrayNode, BinaryOpNo
             assert(false and "not yet implemented");
         }
 
+        const auto& broadcaster = state_ptr->broadcaster;
         const auto& shape = state_ptr->shape;
-        const auto& operand_strides = state_ptr->operand_strides;
-        const auto& operand_indices = state_ptr->operand_indices;
 
         auto& buffer = state_ptr->buffer;
         auto& seen = state_ptr->seen;
@@ -207,11 +185,7 @@ class BinaryOpNode : public ArrayOutputMixin<EqualityMixin<ArrayNode, BinaryOpNo
         auto& diff = state_ptr->diff;
 
         // From that, we can get the views into our predecessors of the size we want
-        const std::ranges::random_access_range auto lhs_view =
-            operand_view_(operands_[0]->buff(state), shape, operand_strides[0]);
-        const std::ranges::random_access_range auto rhs_view =
-            operand_view_(operands_[1]->buff(state), shape, operand_strides[1]);
-
+        const auto [lhs_view, rhs_view] = broadcaster.views(state);
         assert(std::size(lhs_view) == std::size(rhs_view));
 
         // We previously updates our size, so that should now be consistent
@@ -221,159 +195,53 @@ class BinaryOpNode : public ArrayOutputMixin<EqualityMixin<ArrayNode, BinaryOpNo
         // For each predecessor, we go backwards through their diff.
         // TODO: explanation
         for (const auto& [lhs_index, _, lhs] : operands_[0]->diff(state) | std::views::reverse) {
+            assert(false and "not yet implemtned");
+            // std::cout << lhs_index << " lhs index\n";
+            // std::cout << lhs << " lhs value\n";
 
-            std::cout << lhs_index << " lhs index\n";
-            std::cout << lhs << " lhs value\n";
+            // std::ranges::for_each(operand_indices[0], [&](const auto& offset) -> void {
+            //     const ssize_t index = lhs_index + offset;
 
-            std::ranges::for_each(operand_indices[0], [&](const auto& offset) -> void {
-                const ssize_t index = lhs_index + offset;
+            //     std::cout << offset << " offset\n";
+            //     std::cout << index << " index\n";
 
-                std::cout << offset << " offset\n";
-                std::cout << index << " index\n";
+            //     if (size <= index) return;
+            //     if (seen[index]) return;
+            //     seen[index] += 1;
 
-                if (size <= index) return;
-                if (seen[index]) return;
-                seen[index] += 1;
+            //     assert(lhs_view[index] == lhs);  // it was indeed the last word
 
-                assert(lhs_view[index] == lhs);  // it was indeed the last word
+            //     const double value = op(lhs, rhs_view[index]);
 
-                const double value = op(lhs, rhs_view[index]);
+            //     if (buffer[index] == value) return;  // net no change
 
-                if (buffer[index] == value) return;  // net no change
-
-                diff.emplace_back(index, state_ptr->buffer[index], value);
-                buffer[index] = value;
-            });
+            //     diff.emplace_back(index, state_ptr->buffer[index], value);
+            //     buffer[index] = value;
+            // });
         }
         for (const auto& [rhs_index, _, rhs] : operands_[1]->diff(state) | std::views::reverse) {
-            std::ranges::for_each(operand_indices[1], [&](const auto& offset) -> void {
-                const ssize_t index = rhs_index + offset;
+            std::ranges::for_each(
+                broadcaster.template reindex<1>(rhs_index), [&](const auto& index) -> void {
+                    if (size <= index) return;
+                    if (seen[index]) return;
+                    seen[index] += 1;
 
-                if (size <= index) return;
-                if (seen[index]) return;
-                seen[index] += 1;
+                    assert(rhs_view[index] == rhs);  // it was indeed the last word
 
-                assert(rhs_view[index] == rhs);  // it was indeed the last word
+                    const double value = op(lhs_view[index], rhs);
 
-                const double value = op(lhs_view[index], rhs);
+                    if (buffer[index] == value) return;  // net no change
 
-                if (buffer[index] == value) return;  // net no change
-
-                diff.emplace_back(index, state_ptr->buffer[index], value);
-                buffer[index] = value;
-            });
+                    diff.emplace_back(index, state_ptr->buffer[index], value);
+                    buffer[index] = value;
+                }
+            );
         }
 
         assert(std::ranges::all_of(seen, [](auto val) { return 0 <= val and val <= 1; }));
 
         if (state_ptr->diff.size()) Node::propagate(state);
     }
-
-        // const auto [lhs_ptr, rhs_ptr] = operands_;
-
-
-
-        // if (this->size() == 1) {
-        //     // We're doing a scalar operation. Technically this if-branch could be covered by
-        //     // the next one but let's do the bespoke performant thing because it's a common
-        //     // case.
-        //     assert(lhs_ptr->size() == 1);
-        //     assert(rhs_ptr->size() == 1);
-
-        //     assert(false and "not yet implemented");
-
-        // } else if (lhs_ptr->size() == 1) {
-        //     assert(false and "not yet implemented");
-        // } else if (rhs_ptr->size() == 1) {
-        //     // rhs is being broadcast to lhs
-
-        //     // Because rhs is touching every value, if rhs changed then we
-        //     // might as well recalculate from scratch
-        //     const auto& rhs_diff = rhs_ptr->diff(state);
-        //     if (rhs_diff.size() and rhs_diff[0].old != rhs_diff.back().value) {
-        //         assert(false and "not yet implemented");
-        //     }
-
-        //     // Ok, rhs didn't change. So we need to traverse the diff of lhs
-        //     assert(false and "not yet implemented");
-        // } else {
-        //     // No broadcasting. So both arrays should be the same length and
-        //     // we need to traverse both diffs
-
-        //     const std::ranges::random_access_range auto lhs_view = lhs_ptr->view(state);
-        //     const std::ranges::random_access_range auto rhs_view = rhs_ptr->view(state);
-
-        //     assert(lhs_ptr->size(state) == rhs_ptr->size(state));
-
-        //     if (this->dynamic()) {
-        //         std::span<const ssize_t> new_shape = lhs_ptr->shape(state);
-
-        //         assert(new_shape.size());
-        //         if (state_ptr->shape[0] != new_shape[0]) {
-        //             const ssize_t new_size = lhs_ptr->size(state);
-
-        //             for (ssize_t index = state_ptr->buffer.size(); index < new_size; ++index) {
-        //                 const double value = op(lhs_view[index], rhs_view[index]);
-        //                 state_ptr->diff.emplace_back(Update::placement(index, value));
-        //                 state_ptr->buffer.emplace_back(value);
-        //                 state_ptr->seen.emplace_back(true);
-        //             }
-
-        //             for (ssize_t index = state_ptr->buffer.size() - 1; new_size <= index;
-        //             --index) {
-        //                 const double& value = state_ptr->buffer[index];
-        //                 state_ptr->diff.emplace_back(Update::removal(index, value));
-        //                 state_ptr->buffer.pop_back();
-        //                 state_ptr->seen.pop_back();
-        //             }
-
-        //             state_ptr->shape[0] = new_shape[0];
-        //         }
-        //     }
-
-        //     assert(lhs_ptr->size(state) == this->size(state));
-
-        //     const ssize_t size = state_ptr->buffer.size();
-
-        //     // We work backwards through both diffs because we want the last value at
-        //     // each index when recalculating.
-        //     for (const auto& [index, _, lhs] : lhs_ptr->diff(state) | std::views::reverse) {
-        //         if (size <= index) continue;  // something outside of our final buffers
-
-        //         // Check if we've already updated our value at this index
-        //         if (state_ptr->seen[index]) continue;
-        //         state_ptr->seen[index] += 1;
-
-        //         assert(lhs_view[index] == lhs);  // it was indeed the last word
-
-        //         const double value = op(lhs, rhs_view[index]);
-
-        //         if (state_ptr->buffer[index] == value) continue;  // net no change
-
-        //         state_ptr->diff.emplace_back(index, state_ptr->buffer[index], value);
-        //         state_ptr->buffer[index] = value;
-        //     }
-
-        //     for (const auto& [index, _, rhs] : rhs_ptr->diff(state) | std::views::reverse) {
-        //         if (size <= index) continue;  // something outside of our final buffers
-
-        //         // Check if we've already updated our value at this index
-        //         if (state_ptr->seen[index]) continue;
-        //         state_ptr->seen[index] += 1;
-
-        //         assert(rhs_view[index] == rhs);  // it was indeed the last word
-
-        //         const double value = op(lhs_view[index], rhs);
-
-        //         if (state_ptr->buffer[index] == value) continue;  // net no change
-
-        //         state_ptr->diff.emplace_back(index, state_ptr->buffer[index], value);
-        //         state_ptr->buffer[index] = value;
-        //     }
-        // }
-
-        // if (state_ptr->diff.size()) Node::propagate(state);
-
 
     void revert(State& state) const override {
         assert(false and "not yet implememented");
@@ -451,28 +319,130 @@ class BinaryOpNode : public ArrayOutputMixin<EqualityMixin<ArrayNode, BinaryOpNo
     const BinaryOp op;
 
  private:
+    // At some point we'll want to promote this to the main namespace.
+    // We can also have it take N arrays rather than just two, etc etc.
+    class broadcast_ {
+     public:
+        static constexpr ssize_t num_arrays = 2;
+
+        broadcast_(const Array* lhs_ptr, const Array* rhs_ptr) :
+            operands_{lhs_ptr, rhs_ptr},
+            shape_(broadcast_shapes(*lhs_ptr, *rhs_ptr)),
+            statefull_shape_(shape_),
+            operand_strides_{
+                broadcast_strides_to(lhs_ptr->shape(), lhs_ptr->strides(), shape_),
+                broadcast_strides_to(rhs_ptr->shape(), rhs_ptr->strides(), shape_)
+            },
+            operand_index_offsets_{
+                broadcast_index_to(lhs_ptr->shape(), shape_),  // TODO: test (1,) to (n,) arrays
+                broadcast_index_to(rhs_ptr->shape(), shape_)
+            } {}
+
+        template <ssize_t Axis>
+        auto iter(const State& state) const {
+            static_assert(0 <= Axis and Axis < decltype(operands_){}.size());
+
+            const Array* array_ptr = operands_[Axis];
+
+            // To handle the 0dim case, we have to do the same trick as we do in
+            // Array::begin(). We should really change the BufferIterator class to
+            // handle this case.
+            if (shape_.empty()) {
+                static constexpr ssize_t shape = 1;
+                static constexpr ssize_t strides = 0;  // doesn't matter
+                return Array::const_iterator(array_ptr->buff(state), 1, &shape, &strides);
+            }
+
+            return Array::const_iterator(
+                array_ptr->buff(state), shape(state), operand_strides_[Axis]
+            );
+        }
+
+        auto iters(const State& state) const {
+            return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                return std::array{iter<Is>(state)...};
+            }(std::make_index_sequence<num_arrays>{});
+        }
+
+        ssize_t ndim() const { return std::ssize(shape_); }
+
+        template <ssize_t Axis>
+        std::ranges::range auto reindex(ssize_t array_index) const {
+            static_assert(0 <= Axis and Axis < decltype(operands_){}.size());
+
+            static_assert(num_arrays == 2, "not implement for num_arrays != 2");
+
+            if (operands_[Axis]->size() == 1) {
+                assert(false and "not yet implemented");
+            }
+
+            if (operands_[Axis]->dynamic()) {
+                assert(false and "not yet implemented");
+            }
+
+            const ssize_t base = this->base_<Axis>(array_index);
+
+            return operand_index_offsets_[Axis] |
+                   std::views::transform([&base](ssize_t off) -> ssize_t { return off + base; });
+        }
+
+        std::span<const ssize_t> shape() const { return shape_; }
+
+        std::span<const ssize_t> shape(const State&) const {
+            // See note on statefull_shape_ attribute.
+            return statefull_shape_;
+        }
+
+        void update_shape(const State& state) {
+            if (shape_.empty()) return;  // 0dim, nothing to do
+            if (0 <= shape_[0]) return;  // fixed shape, nothing to do
+
+            assert(false and "not yet implemented");
+        }
+
+        auto views(const State& state) const {
+            return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                return std::array{std::ranges::subrange(iter<Is>(state), std::default_sentinel)...};
+            }(std::make_index_sequence<num_arrays>{});
+        }
+
+     private:
+        template <ssize_t Axis>
+        ssize_t base_(ssize_t index) const {
+            assert(false and "not yet implemented");
+        }
+
+        std::array<const Array*, num_arrays> operands_;
+
+        std::vector<ssize_t> shape_;
+
+        // This is one of the main warts that is keeping us from promoting this
+        // class to the main namespace. Ideally we could make the `broadcast`
+        // class `const` and read this off of our predecessors. But
+        // iterators don't own their shapes so we need something for them to
+        // reference. The most convenient solution would be allowing iterators
+        // to hold their own shapes. Needs more thought.
+        std::vector<ssize_t> statefull_shape_;
+
+        std::array<std::vector<ssize_t>, num_arrays> operand_strides_;
+
+        std::array<std::vector<ssize_t>, num_arrays> operand_index_offsets_;
+    };
+
     struct BinaryOpState_ : NodeStateData {
         BinaryOpState_(
-            std::array<std::vector<ssize_t>, 2>&& operand_strides,
-            std::array<std::vector<ssize_t>, 2>&& operand_indices,
+            broadcast_&& broadcaster,
             std::vector<ssize_t>&& shape,
             std::vector<double>&& buffer
         ) :
-            operand_strides(std::move(operand_strides)),
-            operand_indices(std::move(operand_indices)),
-            shape(std::move(shape)),
-            buffer(std::move(buffer)) {}
+            broadcaster(std::move(broadcaster)), buffer(std::move(buffer)) {}
 
-        // Information about our predecessors that we use to construct
-        // views of the appropriate shape
-        const std::array<std::vector<ssize_t>, 2> operand_strides;
-        const std::array<std::vector<ssize_t>, 2> operand_indices;
+        broadcast_ broadcaster;
 
         std::vector<ssize_t> shape;
         ssize_t previous_num_rows = shape.empty() ? -1 : shape[0];
-        const ssize_t row_size = std::ranges::fold_left(
-            shape | std::views::drop(1), ssize_t{1}, op::multiply{}
-        );
+        const ssize_t row_size =
+            std::ranges::fold_left(shape | std::views::drop(1), ssize_t{1}, op::multiply{});
 
         std::vector<double> buffer;
         std::vector<signed char> seen = std::vector<signed char>(buffer.size(), 0);
@@ -521,7 +491,11 @@ class BinaryOpNode : public ArrayOutputMixin<EqualityMixin<ArrayNode, BinaryOpNo
     // Determine the size of the resulting array.
     // Raises an error if they are incompatible.
     // Requires that lhs and rhs be broadcastable.
-    static SizeInfo calculate_sizeinfo_(std::span<const ssize_t> shape, const Array* lhs_ptr, const Array* rhs_ptr) {
+    static SizeInfo calculate_sizeinfo_(
+        std::span<const ssize_t> shape,
+        const Array* lhs_ptr,
+        const Array* rhs_ptr
+    ) {
         // If the shape isn't dynamic, then the size if fixed and so is SizeInfo
         if (shape.empty() or 0 <= shape[0]) {
             return SizeInfo(std::ranges::fold_left(shape, ssize_t{1}, op::multiply{}));
@@ -545,29 +519,29 @@ class BinaryOpNode : public ArrayOutputMixin<EqualityMixin<ArrayNode, BinaryOpNo
         // }
     }
 
-    // TODO
-    static std::ranges::random_access_range auto operand_view_(
-        const double* buff,
-        std::span<const ssize_t> shape,
-        std::span<const ssize_t> strides
-    ) {
-        assert(shape.size() == strides.size());
+    // // TODO
+    // static std::ranges::random_access_range auto operand_view_(
+    //     const double* buff,
+    //     std::span<const ssize_t> shape,
+    //     std::span<const ssize_t> strides
+    // ) {
+    //     assert(shape.size() == strides.size());
 
-        // To handle the 0dim case, we have to do the same trick as we do in
-        // Array::begin(). We should really change the BufferIterator class to
-        // handle this case.
-        if (shape.empty()) {
-            static constexpr ssize_t shape = 1;
-            static constexpr ssize_t strides = 0;  // doesn't matter
-            auto it = Array::const_iterator(buff, 1, &shape, &strides);
-            return std::ranges::subrange(std::move(it), std::default_sentinel);
-        }
+    //     // To handle the 0dim case, we have to do the same trick as we do in
+    //     // Array::begin(). We should really change the BufferIterator class to
+    //     // handle this case.
+    //     if (shape.empty()) {
+    //         static constexpr ssize_t shape = 1;
+    //         static constexpr ssize_t strides = 0;  // doesn't matter
+    //         auto it = Array::const_iterator(buff, 1, &shape, &strides);
+    //         return std::ranges::subrange(std::move(it), std::default_sentinel);
+    //     }
 
-        assert(0 <= shape[0] and "must use state-dependent shape");
+    //     assert(0 <= shape[0] and "must use state-dependent shape");
 
-        auto it = Array::const_iterator(buff, shape, strides);
-        return std::ranges::subrange(std::move(it), std::default_sentinel);
-    }
+    //     auto it = Array::const_iterator(buff, shape, strides);
+    //     return std::ranges::subrange(std::move(it), std::default_sentinel);
+    // }
 
     void replace_predecessor_(ssize_t previous_index, Node* node_ptr) override {
         Node::replace_predecessor_(previous_index, node_ptr);
